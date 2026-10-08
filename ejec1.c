@@ -5,9 +5,6 @@
 #include <sys/wait.h>
 
 pid_t pid_ejec;
-
-// --- Manejadores de Señales ---
-
 // Manejador vacío para capturar señales y salir del pause()
 void manejador_vacio(int sig) {}
 
@@ -21,8 +18,6 @@ void manejador_A(int sig) {
     }
     wait(NULL); // A espera a que el árbol se imprima por completo en pantalla
 }
-
-// --- Funciones de Comportamiento por Proceso ---
 
 // Lógica para los procesos hoja idénticos (X e Y)
 void proceso_hoja(char nombre, pid_t pid_padre, pid_t pid_abuelo) {
@@ -95,7 +90,9 @@ void proceso_A(int secs) {
     signal(SIGUSR1, manejador_A);
 
     pid_t pid_B = fork();
-    if (pid_B == 0) proceso_B(me_A, secs);
+    if (pid_B == 0){ 
+        proceso_B(me_A, secs);
+    }
 
     // A queda a la espera de la señal de Z. Al recibirla, ejecuta pstree y vuelve aquí.
     pause(); 
@@ -107,8 +104,6 @@ void proceso_A(int secs) {
     printf("Soy A (%d) y muero\n", getpid());
     exit(0);
 }
-
-// --- Función Principal ---
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
