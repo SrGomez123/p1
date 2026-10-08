@@ -85,8 +85,6 @@ void imprimir_resultados_superpadre(int y, pid_t *hijos_finales) {
     printf("\n");
 }
 
-// --- Función Principal ---
-
 int main(int argc, char *argv[]) {
     if (argc != 3) {
         printf("Uso: %s x y\n", argv[0]);
