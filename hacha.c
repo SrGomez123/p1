@@ -5,8 +5,6 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 
-// --- Funciones Auxiliares ---
-
 // Módulo para calcular la cantidad de archivos resultantes (hijos a crear)
 int calcular_num_hijos(const char *archivo, long tam_trozo) {
     struct stat st;
@@ -22,8 +20,6 @@ int calcular_num_hijos(const char *archivo, long tam_trozo) {
     
     return num_hijos;
 }
-
-// --- Funciones de Comportamiento de Procesos ---
 
 // Módulo con la lógica del proceso hijo (Recibir datos y escribir a archivo)
 void proceso_hijo(int fd_pipe_lectura, const char *archivo_origen, int indice) {
@@ -79,9 +75,7 @@ void enviar_trozo_por_tuberia(int fd_in, int fd_pipe_escritura, long tam_trozo) 
     close(fd_pipe_escritura);
 }
 
-// --- Función Principal de Orquestación ---
-
-// Módulo que orquesta la creación de tuberías y bifurcaciones
+// Módulo que dirige la creación de tuberías y bifurcaciones
 void dividir_archivo(const char *archivo_origen, long tam_trozo, int num_hijos) {
     int fd_in = open(archivo_origen, O_RDONLY);
     if (fd_in < 0) {
@@ -121,8 +115,6 @@ void dividir_archivo(const char *archivo_origen, long tam_trozo, int num_hijos) 
 
     close(fd_in);
 }
-
-// --- MAIN ---
 
 int main(int argc, char *argv[]) {
     // Validamos el número de argumentos usando la llamada al sistema write
