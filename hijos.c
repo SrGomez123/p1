@@ -1,13 +1,93 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 
+//Funciones de Gestión de Memoria Compartida
+
+pid_t* inicializar_memoria(int x, int y, int *shmid) {
+    int size = (x + y) * sizeof(pid_t);
+    
+    if ((*shmid = shmget(IPC_PRIVATE, size, IPC_CREAT | 0666)) == -1) {
+        perror("Error al crear memoria compartida");
+        exit(1);
+    }
+    
+    return (pid_t *)shmat(*shmid, 0, 0);
+}
+
+void limpiar_memoria(int shmid, pid_t *memoria) {
+    shmdt((char *)memoria);
+    shmctl(shmid, IPC_RMID, 0);
+}
+
+//Funciones de Gestión de Procesos
+
+int generar_cadena_vertical(int x, pid_t *padres) {
+    int nivel = 0;
+    padres[0] = getpid(); // El superpadre guarda su PID
+
+    for (int i = 1; i < x; i++) {
+        pid_t pid = fork();
+        if (pid == -1) {
+            perror("Error en fork");
+            exit(1);
+        }
+        
+        if (pid == 0) {
+            nivel = i;
+            padres[nivel] = getpid();
+        } else {
+            wait(NULL); // Espera al siguiente eslabón
+            
+            if (nivel == 0) {
+                return 0; // El superpadre retorna al main para esperar a la rama y finalizar
+            } else {
+                exit(0); // Los padres intermedios mueren al terminar su hijo
+            }
+        }
+    }
+    return nivel;
+}
+
+void generar_subhijos_horizontales(int x, int y, pid_t *padres, pid_t *hijos_finales) {
+    for (int j = 0; j < y; j++) {
+        pid_t pid_hoja = fork();
+        
+        if (pid_hoja == 0) {
+            hijos_finales[j] = getpid();
+            
+            printf("Soy el subhijo %d, mi padres son: ", getpid());
+            for (int k = 0; k < x; k++) {
+                printf("%d", padres[k]);
+                if (k < x - 1) printf(", ");
+            }
+            printf("\n");
+            
+            exit(0);
+        }
+    }
+
+    // Esperar a que todos los subhijos mueran
+    for (int j = 0; j < y; j++) {
+        wait(NULL);
+    }
+}
+
+void imprimir_resultados_superpadre(int y, pid_t *hijos_finales) {
+    printf("Soy el superpadre (%d) : mis hijos finales son: ", getpid());
+    for (int j = 0; j < y; j++) {
+        printf("%d", hijos_finales[j]);
+        if (j < y - 1) printf(", ");
+    }
+    printf("\n");
+}
+
+// --- Función Principal ---
+
 int main(int argc, char *argv[]) {
-    // Validar parámetros
     if (argc != 3) {
         printf("Uso: %s x y\n", argv[0]);
         exit(1);
@@ -21,101 +101,30 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    // --- 1. CONFIGURACIÓN DE MEMORIA COMPARTIDA ---
     int shmid;
-    pid_t *memoria;
-    int size = (x + y) * sizeof(pid_t);
-
-    // Obtención del segmento IPC_PRIVATE con permisos de lectura/escritura
-    if ((shmid = shmget(IPC_PRIVATE, size, IPC_CREAT | 0666)) == -1) {
-        perror("Error al crear memoria compartida");
-        exit(1);
-    }
-
-    // Vinculación del segmento al proceso
-    memoria = (pid_t *)shmat(shmid, 0, 0);
+    pid_t *memoria = inicializar_memoria(x, y, &shmid);
     
-    // Organizamos el array único en dos bloques lógicos:
-    pid_t *padres = memoria;               // Primeros 'x' huecos para la cadena vertical
-    pid_t *hijos_finales = memoria + x;    // Siguientes 'y' huecos para los subhijos
+    // Punteros lógicos para las dos partes de la memoria
+    pid_t *padres = memoria;               
+    pid_t *hijos_finales = memoria + x;    
 
-    // --- 2. CREACIÓN DEL ÁRBOL VERTICAL (x niveles) ---
-    int nivel = 0;
-    padres[0] = getpid(); // El superpadre guarda su PID en la raíz
+    // 1. Generar la cadena vertical de 'x' niveles
+    int nivel = generar_cadena_vertical(x, padres);
 
-    for (int i = 1; i < x; i++) {
-        pid_t pid = fork();
-        if (pid == -1) {
-            perror("Error en fork");
-            exit(1);
-        }
-        
-        if (pid == 0) {
-            // PROCESO HIJO: Actualiza su nivel, registra su PID en la memoria y avanza en el bucle
-            nivel = i;
-            padres[nivel] = getpid();
-        } else {
-            // PROCESO PADRE: Espera a que su hijo (el siguiente eslabón) termine por completo
-            wait(NULL);
-            
-            if (nivel == 0) {
-                // Si es el superpadre, rompe el bucle para ir a la sección final (imprimir resultados y limpiar)
-                break;
-            } else {
-                // Si es un padre intermedio de la cadena vertical, ya ha cumplido su ciclo y muere
-                exit(0);
-            }
-        }
-    }
-
-    // --- 3. CREACIÓN DE LA RAMA HORIZONTAL (sólo la ejecuta el proceso del nivel x-1) ---
+    // 2. El último nodo de la cadena crea la rama horizontal
     if (nivel == x - 1) {
-        for (int j = 0; j < y; j++) {
-            pid_t pid_hoja = fork();
-            
-            if (pid_hoja == 0) {
-                // DENTRO DEL SUBHIJO (Hoja del árbol)
-                hijos_finales[j] = getpid(); // Registra su PID para que el superpadre lo pueda leer
-                
-                // Imprime su propio mensaje requerido
-                printf("Soy el subhijo %d, mi padres son: ", getpid());
-                for (int k = 0; k < x; k++) {
-                    printf("%d", padres[k]);
-                    if (k < x - 1) printf(", ");
-                }
-                printf("\n");
-                
-                exit(0); // El subhijo termina su ejecución
-            }
-        }
-
-        // El padre del final de la cadena vertical espera a que todos sus 'y' subhijos terminen
-        for (int j = 0; j < y; j++) {
-            wait(NULL);
-        }
-
-        // Si x > 1, este eslabón intermedio muere aquí. 
-        // (Si x == 1, este proceso coincide con el superpadre, por tanto NO debe morir aún).
+        generar_subhijos_horizontales(x, y, padres, hijos_finales);
+        
+        // Si no es el superpadre (x > 1), muere tras esperar a las ramas
         if (nivel != 0) {
             exit(0);
         }
     }
 
-    // --- 4. IMPRESIÓN DEL SUPERPADRE Y LIMPIEZA ---
+    // 3. Imprimir el mensaje final y limpiar el IPC (sólo el superpadre)
     if (nivel == 0) {
-        // Al llegar aquí, el wait(NULL) del superpadre se ha desbloqueado, lo que garantiza 
-        // que todos los hijos y subhijos han ejecutado su lógica y rellenado la memoria compartida.
-        
-        printf("Soy el superpadre (%d) : mis hijos finales son: ", getpid());
-        for (int j = 0; j < y; j++) {
-            printf("%d", hijos_finales[j]);
-            if (j < y - 1) printf(", ");
-        }
-        printf("\n");
-
-        // Desvincular el puntero y eliminar el segmento de memoria compartida
-        shmdt((char *)memoria);
-        shmctl(shmid, IPC_RMID, 0);
+        imprimir_resultados_superpadre(y, hijos_finales);
+        limpiar_memoria(shmid, memoria);
     }
 
     return 0;
