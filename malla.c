@@ -3,19 +3,14 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-// --- Funciones de Comportamiento de Nodos ---
-
-// Lógica para el último proceso de cada columna (hoja)
-void proceso_hoja() {
-    // Se duerme durante 3 segundos para mantener la estructura vertical 
-    // viva y bloqueada mientras el proceso raíz ejecuta el pstree.
+// Lógica para el último proceso de cada columna
+void ultimo_proceso() {
     sleep(3);
     exit(0);
 }
 
 // Lógica para crear la profundidad (filas) de una columna concreta
 void generar_cadena_vertical(int x) {
-    // Empezamos en 1 porque el nivel 0 es la propia cabecera de la columna
     for (int i = 1; i < x; i++) {
         pid_t pid_fila = fork();
         
@@ -29,14 +24,10 @@ void generar_cadena_vertical(int x) {
             wait(NULL);
             exit(0);
         }
-        // PROCESO HIJO: Continúa el bucle para crear el siguiente nivel
     }
-    
-    // El último proceso en nacer sale del bucle y se convierte en la hoja final
-    proceso_hoja();
+    // El último proceso en nacer sale del bucle y se convierte en la espera
+    ultimo_proceso();
 }
-
-// --- Funciones de Estructura Principal ---
 
 // Lógica para la expansión horizontal de la malla
 void generar_columnas(int x, int y) {
@@ -49,17 +40,14 @@ void generar_columnas(int x, int y) {
         }
         
         if (pid_columna == 0) {
-            // DENTRO DEL HIJO (Cabecera de columna): 
-            // Abandona la horizontalidad e inicia su propia cadena vertical
+            // Abandona la horizontal e inicia su propia cadena vertical
             generar_cadena_vertical(x);
         }
-        // EL PROCESO RAÍZ continúa el bucle iterando 'y' veces
     }
 }
 
-// Lógica para la monitorización del árbol
+// Lógica para la impresión del árbol
 void ejecutar_pstree(pid_t pid_raiz) {
-    // Margen de 1 segundo para asegurar que todas las ramas han terminado sus forks
     sleep(1); 
     
     printf("\nÁrbol de procesos resultante:\n");
@@ -85,10 +73,7 @@ void recolectar_columnas(int y) {
     printf("\nDestrucción del árbol completada con éxito.\n");
 }
 
-// --- Función Principal ---
-
 int main(int argc, char *argv[]) {
-    // 1. Validación
     if (argc != 3) {
         printf("Uso: %s <filas_x> <columnas_y>\n", argv[0]);
         exit(1);
@@ -105,14 +90,14 @@ int main(int argc, char *argv[]) {
     pid_t pid_raiz = getpid();
     printf("Proceso raíz (malla) iniciado con PID: %d\n", pid_raiz);
 
-    // 2. Creación de la topología
+    // 1.Creación de la malla
     generar_columnas(x, y);
     
-    // 3. Monitorización
+    // 2.Arbol
     ejecutar_pstree(pid_raiz);
     
-    // 4. Limpieza IPC/Procesos
-    recolectar_columnas(y);
+    // 3.Limpieza procesos
+    destruccion_columnas(y);
 
     return 0;
 }
