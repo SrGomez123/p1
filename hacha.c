@@ -54,7 +54,7 @@ int main(int argc, char *argv[]) {
         }
 
         if (pid == 0) {
-            // --- PROCESO HIJO ---
+            //PROCESO HIJO
             close(p[1]); // El hijo no va a escribir en la tubería, cierra ese extremo
 
             char nombre_out[256];
@@ -83,7 +83,7 @@ int main(int argc, char *argv[]) {
             
             exit(0); // El hijo termina su trabajo
         } else {
-            // --- PROCESO PADRE ---
+            //PROCESO PADRE
             close(p[0]); // El padre no va a leer de la tubería, cierra ese extremo
 
             char buffer_padre[4096];
