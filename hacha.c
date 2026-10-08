@@ -5,42 +5,94 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 
-int main(int argc, char *argv[]) {
-    // Validamos el número de argumentos
-    if (argc != 3) {
-        char msg[] = "Uso: ./hacha <archivo> <tamaño>\n";
-        write(STDERR_FILENO, msg, sizeof(msg) - 1);
-        exit(1);
-    }
+// --- Funciones Auxiliares ---
 
-    char *archivo_origen = argv[1];
-    long tam_trozo = atol(argv[2]);
-
-    // Obtenemos el tamaño total del archivo para saber cuántos hijos necesitamos crear
+// Módulo para calcular la cantidad de archivos resultantes (hijos a crear)
+int calcular_num_hijos(const char *archivo, long tam_trozo) {
     struct stat st;
-    if (stat(archivo_origen, &st) == -1) {
+    if (stat(archivo, &st) == -1) {
         perror("Error al obtener información del archivo");
         exit(1);
     }
 
-    // Calculamos el número de fragmentos (y por ende, de hijos)
     int num_hijos = st.st_size / tam_trozo;
     if (st.st_size % tam_trozo != 0) {
         num_hijos++;
     }
+    
+    return num_hijos;
+}
 
-    // Abrimos el archivo original para lectura
+// --- Funciones de Comportamiento de Procesos ---
+
+// Módulo con la lógica del proceso hijo (Recibir datos y escribir a archivo)
+void proceso_hijo(int fd_pipe_lectura, const char *archivo_origen, int indice) {
+    char nombre_out[256];
+    // Construimos el nombre del archivo con formato .h00, .h01...
+    sprintf(nombre_out, "%s.h%02d", archivo_origen, indice);
+
+    // El hijo crea el archivo de destino y lo abre para escritura
+    int fd_out = creat(nombre_out, 0666);
+    if (fd_out < 0) {
+        perror("Error al crear el archivo de destino");
+        exit(1);
+    }
+
+    char buffer_hijo[4096];
+    int leidos_hijo;
+
+    // Lee de la tubería hasta que el padre cierra su extremo (devuelve 0)
+    while ((leidos_hijo = read(fd_pipe_lectura, buffer_hijo, sizeof(buffer_hijo))) > 0) {
+        write(fd_out, buffer_hijo, leidos_hijo);
+    }
+
+    close(fd_out);
+    close(fd_pipe_lectura);
+    
+    exit(0); // El hijo termina su trabajo
+}
+
+// Módulo con la lógica del proceso padre (Leer del archivo original y enviar por tubería)
+void enviar_trozo_por_tuberia(int fd_in, int fd_pipe_escritura, long tam_trozo) {
+    char buffer_padre[4096];
+    long bytes_enviados = 0;
+    int leidos_padre;
+
+    // Lee del archivo original solo el tamaño correspondiente a un trozo
+    while (bytes_enviados < tam_trozo) {
+        long a_leer = tam_trozo - bytes_enviados;
+        if (a_leer > sizeof(buffer_padre)) {
+            a_leer = sizeof(buffer_padre);
+        }
+
+        leidos_padre = read(fd_in, buffer_padre, a_leer);
+        if (leidos_padre <= 0) {
+            break; // Fin del archivo original
+        }
+
+        // Envía lo leído al hijo a través de la tubería
+        write(fd_pipe_escritura, buffer_padre, leidos_padre);
+        bytes_enviados += leidos_padre;
+    }
+
+    // Cerrar la tubería es fundamental para que el hijo detecte el final
+    close(fd_pipe_escritura);
+}
+
+// --- Función Principal de Orquestación ---
+
+// Módulo que orquesta la creación de tuberías y bifurcaciones
+void dividir_archivo(const char *archivo_origen, long tam_trozo, int num_hijos) {
     int fd_in = open(archivo_origen, O_RDONLY);
     if (fd_in < 0) {
         perror("Error al abrir el archivo de origen");
         exit(1);
     }
 
-    // Bucle para crear los hijos y enviarles la información
+    // Bucle para crear los hijos y comunicarles la información
     for (int i = 0; i < num_hijos; i++) {
         int p[2];
         
-        // Creamos la tubería antes del fork
         if (pipe(p) < 0) {
             perror("Error al crear la tubería");
             exit(1);
@@ -54,68 +106,40 @@ int main(int argc, char *argv[]) {
         }
 
         if (pid == 0) {
-            //PROCESO HIJO
-            close(p[1]); // El hijo no va a escribir en la tubería, cierra ese extremo
-
-            char nombre_out[256];
-            // Construimos el nombre del archivo con formato .h00, .h01...
-            // sprintf se usa aquí solo para formatear cadenas en memoria, no hace E/S a disco
-            sprintf(nombre_out, "%s.h%02d", archivo_origen, i);
-
-            // El hijo crea el archivo de destino y lo abre para escritura
-            int fd_out = creat(nombre_out, 0666);
-            if (fd_out < 0) {
-                perror("Error al crear el archivo de destino");
-                exit(1);
-            }
-
-            char buffer_hijo[4096];
-            int leidos_hijo;
-
-            // El hijo lee de la tubería hasta que el padre cierra su extremo de escritura (devuelve 0)
-            while ((leidos_hijo = read(p[0], buffer_hijo, sizeof(buffer_hijo))) > 0) {
-                // Escribe en su archivo de destino lo recibido por la tubería
-                write(fd_out, buffer_hijo, leidos_hijo);
-            }
-
-            close(fd_out);
-            close(p[0]); // Cierra la tubería de lectura
-            
-            exit(0); // El hijo termina su trabajo
+            // DENTRO DEL PROCESO HIJO
+            close(p[1]); // Cierra extremo de escritura
+            proceso_hijo(p[0], archivo_origen, i);
         } else {
-            //PROCESO PADRE
-            close(p[0]); // El padre no va a leer de la tubería, cierra ese extremo
-
-            char buffer_padre[4096];
-            long bytes_enviados = 0;
-            int leidos_padre;
-
-            // El padre lee del archivo original solo el tamaño correspondiente a un trozo
-            while (bytes_enviados < tam_trozo) {
-                long a_leer = tam_trozo - bytes_enviados;
-                if (a_leer > sizeof(buffer_padre)) {
-                    a_leer = sizeof(buffer_padre);
-                }
-
-                // Lee del archivo usando llamadas al sistema
-                leidos_padre = read(fd_in, buffer_padre, a_leer);
-                if (leidos_padre <= 0) {
-                    break; // Fin del archivo
-                }
-
-                // Envía lo leído al hijo a través de la tubería
-                write(p[1], buffer_padre, leidos_padre);
-                bytes_enviados += leidos_padre;
-            }
-
-            // CERRAR LA TUBERÍA es fundamental para que el hijo reciba el EOF en su bucle de lectura
-            close(p[1]); 
-
-            // Decisión de implementación: Esperamos a que termine este hijo antes de crear el siguiente (lanzamiento secuencial)
+            // DENTRO DEL PROCESO PADRE
+            close(p[0]); // Cierra extremo de lectura
+            enviar_trozo_por_tuberia(fd_in, p[1], tam_trozo);
+            
+            // Lanzamiento secuencial: Esperamos a que termine este hijo antes de crear el siguiente
             wait(NULL);
         }
     }
 
     close(fd_in);
+}
+
+// --- MAIN ---
+
+int main(int argc, char *argv[]) {
+    // Validamos el número de argumentos usando la llamada al sistema write
+    if (argc != 3) {
+        char msg[] = "Uso: ./hacha <archivo> <tamaño>\n";
+        write(STDERR_FILENO, msg, sizeof(msg) - 1);
+        exit(1);
+    }
+
+    char *archivo_origen = argv[1];
+    long tam_trozo = atol(argv[2]);
+
+    // 1. Calculamos los fragmentos necesarios
+    int num_hijos = calcular_num_hijos(archivo_origen, tam_trozo);
+
+    // 2. Ejecutamos la división mediante tuberías
+    dividir_archivo(archivo_origen, tam_trozo, num_hijos);
+
     return 0;
 }
